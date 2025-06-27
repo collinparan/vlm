@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera VLM Interaction App</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .controls, .io-areas {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .io-areas {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        textarea {
+            width: 300px;
+            height: 80px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        #videoFeed {
+            width: 480px;
+            height: 360px;
+            border: 2px solid #333;
+            background-color: #000;
+            border-radius: 8px;
+        }
+        #startButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            color: white;
+        }
+        #startButton.start {
+            background-color: #28a745;
+        }
+        #startButton.stop {
+            background-color: #dc3545;
+        }
+        #startButton:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        label {
+            font-weight: bold;
+        }
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        .hidden {
+            display: none;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .model-status {
+            background-color: #fff;
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-size: 14px;
+        }
+        .model-status.ready {
+            border-left: 4px solid #28a745;
+        }
+        .model-status.loading {
+            border-left: 4px solid #ffc107;
+        }
+        .model-status.error {
+            border-left: 4px solid #dc3545;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Camera VLM Interaction App</h1>
+
+    <div id="loadingDiv" class="loading">
+        <div class="loading-spinner"></div>
+        <p>Loading vision-language model...</p>
+        <p id="loadingStatus">Initializing...</p>
+    </div>
+
+    <div id="modelStatus" class="model-status loading hidden">
+        <span id="modelStatusText">Model not loaded</span>
+    </div>
+
+    <video id="videoFeed" autoplay playsinline class="hidden"></video>
+    <canvas id="canvas" class="hidden"></canvas>
+
+    <div id="mainContent" class="hidden">
+        <div class="io-areas">
+            <div>
+                <label for="instructionText">Instruction:</label><br>
+                <textarea id="instructionText" style="height: 2em; width: 40em" name="Instruction"></textarea>
+            </div>
+            <div>
+                <label for="responseText">Response:</label><br>
+                <textarea id="responseText" style="height: 4em; width: 40em" name="Response" readonly placeholder="Model response will appear here..."></textarea>
+            </div>
+        </div>
+
+        <div class="controls">
+            <label for="intervalSelect">Interval between requests:</label>
+            <select id="intervalSelect" name="Interval between requests">
+                <option value="500">500ms</option>
+                <option value="1000" selected>1s</option>
+                <option value="2000">2s</option>
+                <option value="3000">3s</option>
+                <option value="5000">5s</option>
+            </select>
+            <button id="startButton" class="start" disabled>Start</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+        
+        // Configure environment
+        env.allowLocalModels = false;
+        env.remoteURL = 'https://huggingface.co/';
+        
+        const video = document.getElementById('videoFeed');
+        const canvas = document.getElementById('canvas');
+        const instructionText = document.getElementById('instructionText');
+        const responseText = document.getElementById('responseText');
+        const intervalSelect = document.getElementById('intervalSelect');
+        const startButton = document.getElementById('startButton');
+        const loadingDiv = document.getElementById('loadingDiv');
+        const loadingStatus = document.getElementById('loadingStatus');
+        const mainContent = document.getElementById('mainContent');
+        const modelStatus = document.getElementById('modelStatus');
+        const modelStatusText = document.getElementById('modelStatusText');
+
+        instructionText.value = "What do you see?";
+
+        let stream;
+        let intervalId;
+        let isProcessing = false;
+        let processor = null;
+        let isModelReady = false;
+
+        // Update model status display
+        function updateModelStatus(status, message) {
+            modelStatus.className = `model-status ${status}`;
+            modelStatusText.textContent = message;
+            if (status === 'ready') {
+                startButton.disabled = false;
+            }
+        }
+
+        // Initialize the vision-language model
+        async function initModel() {
+            try {
+                loadingStatus.textContent = 'Loading image-to-text model...';
+                
+                // Using a smaller vision-language model that works in the browser
+                // Options: Xenova/vit-gpt2-image-captioning, Xenova/blip-image-captioning-base
+                processor = await pipeline('image-to-text', 'Xenova/vit-gpt2-image-captioning', {
+                    progress_callback: (progress) => {
+                        if (progress.status === 'progress') {
+                            const percent = Math.round(progress.progress);
+                            loadingStatus.textContent = `Downloading model: ${percent}%`;
+                        }
+                    }
+                });
+                
+                isModelReady = true;
+                loadingDiv.classList.add('hidden');
+                mainContent.classList.remove('hidden');
+                modelStatus.classList.remove('hidden');
+                video.classList.remove('hidden');
+                updateModelStatus('ready', 'Model loaded and ready');
+                
+                // Initialize camera after model is loaded
+                await initCamera();
+                
+            } catch (error) {
+                console.error('Error loading model:', error);
+                loadingStatus.textContent = `Error: ${error.message}`;
+                loadingStatus.classList.add('error');
+                updateModelStatus('error', `Failed to load model: ${error.message}`);
+            }
+        }
+
+        // Initialize camera
+        async function initCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                video.srcObject = stream;
+                responseText.value = "Camera ready. You can start processing.";
+            } catch (err) {
+                console.error("Error accessing camera:", err);
+                responseText.value = `Camera error: ${err.message}`;
+                updateModelStatus('error', 'Camera access denied');
+                alert(`Error accessing camera: ${err.name}. Please grant camera permission.`);
+            }
+        }
+
+        // Capture image from video
+        function captureImage() {
+            if (!stream || !video.videoWidth) {
+                console.warn("Video stream not ready for capture.");
+                return null;
+            }
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        // Process image with the model
+        async function processImage() {
+            if (!isProcessing || !isModelReady) return;
+
+            const imageDataUrl = captureImage();
+            if (!imageDataUrl) {
+                responseText.value = "Failed to capture image.";
+                return;
+            }
+
+            try {
+                // For image captioning models, the instruction is typically not used
+                // The model generates a description of what it sees
+                const result = await processor(imageDataUrl);
+                
+                // Get the generated text
+                const generatedText = result[0].generated_text;
+                
+                // If user has a specific question, we can append context
+                const instruction = instructionText.value.toLowerCase();
+                if (instruction !== "what do you see?" && instruction !== "") {
+                    responseText.value = `Caption: ${generatedText}\n\nNote: This model generates general captions. For specific questions, the caption above is what the model sees.`;
+                } else {
+                    responseText.value = generatedText;
+                }
+                
+            } catch (error) {
+                console.error('Error processing image:', error);
+                responseText.value = `Error: ${error.message}`;
+            }
+        }
+
+        // Start processing
+        function handleStart() {
+            if (!stream) {
+                responseText.value = "Camera not available.";
+                return;
+            }
+            isProcessing = true;
+            startButton.textContent = "Stop";
+            startButton.classList.remove('start');
+            startButton.classList.add('stop');
+
+            instructionText.disabled = true;
+            intervalSelect.disabled = true;
+
+            responseText.value = "Processing...";
+
+            const intervalMs = parseInt(intervalSelect.value, 10);
+            
+            // Initial call
+            processImage();
+            
+            // Set interval
+            intervalId = setInterval(processImage, intervalMs);
+        }
+
+        // Stop processing
+        function handleStop() {
+            isProcessing = false;
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+            startButton.textContent = "Start";
+            startButton.classList.remove('stop');
+            startButton.classList.add('start');
+
+            instructionText.disabled = false;
+            intervalSelect.disabled = false;
+            responseText.value = "Processing stopped.";
+        }
+
+        // Button click handler
+        startButton.addEventListener('click', () => {
+            if (isProcessing) {
+                handleStop();
+            } else {
+                handleStart();
+            }
+        });
+
+        // Initialize model when page loads
+        window.addEventListener('DOMContentLoaded', initModel);
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+        });
+    </script>
+</body>
+</html>
