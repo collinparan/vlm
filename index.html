@@ -22,22 +22,27 @@
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 600px;
         }
         .io-areas {
             flex-direction: column;
             align-items: stretch;
         }
         textarea {
-            width: 300px;
+            width: 100%;
+            max-width: 640px;
             height: 80px;
             padding: 8px;
             border: 1px solid #ccc;
             border-radius: 4px;
             font-size: 14px;
+            box-sizing: border-box;
         }
         #videoFeed {
-            width: 480px;
-            height: 360px;
+            width: 100%;
+            max-width: 480px;
+            height: auto;
             border: 2px solid #333;
             background-color: #000;
             border-radius: 8px;
@@ -111,6 +116,15 @@
         .model-status.error {
             border-left: 4px solid #dc3545;
         }
+        @media (max-width: 600px) {
+            .controls, .io-areas {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            textarea {
+                max-width: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -134,11 +148,11 @@
         <div class="io-areas">
             <div>
                 <label for="instructionText">Instruction:</label><br>
-                <textarea id="instructionText" style="height: 2em; width: 40em" name="Instruction"></textarea>
+                <textarea id="instructionText" style="height: 2em; width: 100%" name="Instruction"></textarea>
             </div>
             <div>
                 <label for="responseText">Response:</label><br>
-                <textarea id="responseText" style="height: 4em; width: 40em" name="Response" readonly placeholder="Model response will appear here..."></textarea>
+                <textarea id="responseText" style="height: 4em; width: 100%" name="Response" readonly placeholder="Model response will appear here..."></textarea>
             </div>
         </div>
 
