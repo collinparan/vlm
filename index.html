@@ -201,7 +201,8 @@
                 processor = await pipeline('image-to-text', 'Xenova/vit-gpt2-image-captioning', {
                     progress_callback: (progress) => {
                         if (progress.status === 'progress') {
-                            const percent = Math.round(progress.progress);
+                            // progress.progress is a fraction (0-1), so convert to percentage
+                            const percent = Math.round(progress.progress * 100);
                             loadingStatus.textContent = `Downloading model: ${percent}%`;
                         }
                     }
